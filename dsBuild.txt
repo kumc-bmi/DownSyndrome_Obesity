@@ -1,0 +1,766 @@
+
+
+/* Title : Down syndrome- Obesity Cohort Selection
+   Programmer: Lakmal Wlapitage
+   Date : 08/19/2019
+   Database Conection Date: 08/19/2019
+ 
+ In this project I am working with Down Syndrome Patients and their Obesity Trends and Comorbidities.
+ Later i will add more....ASD and IDD
+  
+*/
+
+alter session set NLS_TIMESTAMP_FORMAT = 'DD-MM-YYYY'; 
+alter session set NLS_DATE_FORMAT = 'DD-MM-YYYY';
+
+/*** Create a table for ds_comorbidities */
+
+drop table ds_comobid purge;
+
+create table ds_comobid as
+select  'Down Syndrome' as Dx_Type
+,concept_cd
+,name_char
+from blueherondata.concept_dimension
+where regexp_like(concept_path,('(\\ICD9).*\\'||'758\.0\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(758\.0)$'))
+and concept_path like '%\i2b2\Diagnoses\ICD9%'
+union all 
+select 'Down Syndrome' as Dx_Type
+,concept_cd
+,name_char
+from blueherondata.concept_dimension
+where regexp_like(concept_path,('(\\ICD10).*\\'||'Q90\..*')) or regexp_like(concept_cd,('(ICD10\:)'||'(Q90\..*)$'))
+and concept_path like '%\i2b2\Diagnoses\ICD10%'
+;
+
+----- View
+select * from ds_comobid;
+
+
+/* Extracting concepts for identifying pregnant individuals */
+
+drop table preg_comobid purge;
+
+create table preg_comobid as
+select  'Pregnant' as Dx_Type
+,concept_cd
+,name_char
+from blueherondata.concept_dimension
+where regexp_like(concept_path,('(\\ICD9).*\\'||'V22\'))
+and concept_path like '%\i2b2\Diagnoses\ICD9%'
+union all
+select  'Pregnant' as Dx_Type
+,concept_cd
+,name_char
+from blueherondata.concept_dimension
+where regexp_like(concept_path,('(\\ICD10).*\\'||'Z34\'))
+and concept_path like '%\i2b2\Diagnoses\ICD10%'
+union all
+select  'Pregnant' as Dx_Type
+,concept_cd
+,name_char
+from blueherondata.concept_dimension
+where concept_cd='KUH|PAT_ENC:LMP4'
+;
+
+
+/* Now, We will extract our patient/set with Downs Syndrome Diagnosis */
+
+drop table ds_cohort purge;
+
+create table ds_cohort as
+select patient_num
+,min(start_date) as Dx_date
+from blueherondata.observation_fact
+   where concept_cd in ( select concept_cd
+                           from ds_comobid
+                           where Dx_Type='Down Syndrome'                           
+                        )
+group by patient_num
+;
+
+select count(distinct patient_num)
+from ds_cohort
+;         ------- 1234 
+
+/* Now we are getting the demographics infromation of these patients
+    ,Important, birth date, Death date
+          other ,sex and race fro demographic analysis   */
+
+drop table ds_demo  purge;
+ 
+ create table ds_demo as 
+ select dsc.patient_num
+ ,dsc.Dx_date
+,pat.birth_date
+,pat.death_date
+,pat.sex_cd sex
+,pat.race_cd race
+,case when prg.start_date is not null then 'y'
+             else null end as pregnant
+from ds_cohort dsc
+left join blueherondata.patient_dimension pat
+      on dsc.patient_num=pat.patient_num
+left join (select patient_num
+                   ,min(start_date) as start_date
+                   from blueherondata.observation_fact
+                   where concept_cd in (select concept_cd from preg_comobid) 
+                    group by patient_num
+                   ) prg
+      on dsc.patient_num=prg.patient_num
+;
+
+---- View and explor counts
+select * from ds_demo;
+
+select count (distinct patient_num)
+from ds_demo;    -- 1234
+
+select count(distinct patient_num) from ds_demo
+where pregnant is not null;    ---- 79
+
+select count(distinct patient_num) from ds_demo
+where death_date is not null;    ---- 107
+
+
+/* Now we want to get thire Weight, Height, BMI%, BMI
+ impotant concepts to extract:
+     KUH|PAT_ENC:BMI_PERCENTILE
+     KUH|PAT_ENC:BMI
+     KUH|PAT_ENC:HEIGHT
+     KUH|PAT_ENC:WEIGHT
+ */
+
+  drop table ds_bmi  purge; 
+ 
+ create table ds_bmi as 
+ with tab_enc as (
+ select dsc.patient_num
+ ,obs.encounter_num
+ ,min(obs.start_date) as encounter_dt
+ from ds_cohort dsc
+ left join blueherondata.observation_fact obs
+      on dsc.patient_num=obs.patient_num
+ group by dsc.patient_num,obs.encounter_num 
+ )
+  ,tab_weight as (
+ select dsc.patient_num
+ ,obs.encounter_num
+ ,min(obs.start_date) as weight_dt
+ ,round(avg(obs.nval_num),2) as weight
+ from ds_cohort dsc
+ left join blueherondata.observation_fact obs
+      on dsc.patient_num=obs.patient_num
+ where obs.concept_cd='KUH|PAT_ENC:WEIGHT'
+ group by dsc.patient_num,obs.encounter_num 
+ )
+ ,tab_height as (
+ select dsc.patient_num
+ ,obs.encounter_num
+ ,min(obs.start_date) as height_dt
+ ,round(avg(obs.nval_num),2) as height
+ from ds_cohort dsc
+ left join blueherondata.observation_fact obs
+      on dsc.patient_num=obs.patient_num
+ where obs.concept_cd='KUH|PAT_ENC:HEIGHT'
+ group by dsc.patient_num,obs.encounter_num 
+ )
+ ,tab_bmiper as (
+ select dsc.patient_num
+ ,obs.encounter_num
+ ,min(obs.start_date) as bmiper_dt
+ ,round(avg(obs.nval_num),2) as bmiper
+ from ds_cohort dsc
+ left join blueherondata.observation_fact obs
+      on dsc.patient_num=obs.patient_num
+ where obs.concept_cd='KUH|PAT_ENC:BMI_PERCENTILE'
+ group by dsc.patient_num,obs.encounter_num 
+ )
+ ,tab_bmi as (
+ select dsc.patient_num
+ ,obs.encounter_num
+ ,min(obs.start_date) as bmi_dt
+ ,round(avg(obs.nval_num),2) as bmi
+ from ds_cohort dsc
+ left join blueherondata.observation_fact obs
+      on dsc.patient_num=obs.patient_num
+ where obs.concept_cd='KUH|PAT_ENC:BMI'
+ group by dsc.patient_num,obs.encounter_num 
+ )
+  select enc.patient_num
+  ,enc.encounter_num
+  ,encounter_dt
+  ,tbw.weight_dt
+  ,tbw.weight
+  ,tbh.height_dt
+  ,tbh.height
+  ,tbp.bmiper_dt
+  ,tbp.bmiper
+  ,tbb.bmi_dt
+  ,tbb.bmi
+from tab_enc enc
+left join tab_weight tbw
+     on enc.patient_num=tbw.patient_num and enc.encounter_num=tbw.encounter_num
+left join tab_height tbh
+     on enc.patient_num=tbh.patient_num and enc.encounter_num=tbh.encounter_num
+left join tab_bmiper tbp
+     on enc.patient_num=tbp.patient_num and enc.encounter_num=tbp.encounter_num
+left join tab_bmi tbb
+     on enc.patient_num=tbb.patient_num and enc.encounter_num=tbb.encounter_num
+ ;
+ 
+----- View and explore counts
+ select *  from ds_bmi;
+ 
+ select count(*),count(distinct patient_num)
+ from ds_bmi;   --1234
+ 
+/*** Merge BMI data with Other demographics data  *****/
+
+drop table ds_bmidemo  purge; 
+ 
+create table ds_bmidemo as 
+with tab_bmi as (
+ select tdm.patient_num
+  ,tdm.birth_date
+  ,tdm.Dx_date
+  ,tbm.encounter_num
+  ,tbm.encounter_dt
+  ,round((tbm.encounter_dt-tdm.birth_date)/365.25,2) as age_visit_yr
+  ,round((tbm.encounter_dt-tdm.birth_date)/30.44,2) as age_visit_mo
+  ,case when tdm.death_date is null then null ------sysdate
+            else tdm.death_date end as death_date
+  ,tdm.sex
+  ,tdm.race
+from ds_bmi tbm
+join ds_demo tdm
+     on tbm.patient_num=tdm.patient_num 
+)
+select tbl.*
+from tab_bmi tbl
+ where 
+  tbl.encounter_dt>=tbl.Dx_date     ---- 1226 patients
+
+  and 
+   tbl.age_visit_mo>=24             ---- 1148
+    
+    and  tbl.patient_num not in ( select patient_num from ds_demo
+                             where pregnant is not null)     
+    and  
+      tbl.patient_num not in ( select patient_num from ds_demo
+                               where death_date is not null)    
+       
+;  
+
+select * from ds_bmidemo;
+
+select count(*),count(distinct patient_num)
+from ds_bmidemo;     ---- 967 Patinets  
+
+-------------------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------------------------------
+/****** Viewing the Patients/encounters bfore DX date   ****/
+
+drop table ds_bmidemo_alt  purge; 
+ 
+create table ds_bmidemo_alt as 
+with tab_bmi as (
+ select tdm.patient_num
+  ,tdm.birth_date
+  ,tdm.Dx_date
+  ,tbm.encounter_num
+  ,tbm.encounter_dt
+  ,round((tbm.encounter_dt-tdm.birth_date)/365.25,2) as age_visit_yr
+  ,round((tbm.encounter_dt-tdm.birth_date)/30.44,2) as age_visit_mo
+  ,case when tdm.death_date is null then null ------sysdate
+            else tdm.death_date end as death_date
+   ,tdm.sex
+  ,tdm.race
+from ds_bmi tbm
+join ds_demo tdm
+     on tbm.patient_num=tdm.patient_num  
+)
+select tbl.*
+from tab_bmi tbl
+ where 
+  tbl.encounter_dt>=tbl.Dx_date  
+;
+
+select count (distinct patient_num)
+from  ds_bmidemo_alt;   --- 1226
+
+
+--###################################################################################################################################################--------
+
+
+/*** This script is used to create the comorbidity data tables ****/
+
+/* First, we need to capture all comorbidity Dx codes *****/
+
+drop table other_comobid purge;
+
+create table other_comobid as
+----------------------------------------------------------------------------------------------- Congenital Heart Disease -------
+select  'CHD' as Dx_Type
+,concept_cd
+,name_char
+from blueherondata.concept_dimension
+where (regexp_like(concept_path,('(\\ICD9).*\\'||'425\.11\\'))  or regexp_like(concept_cd,('(ICD9\:)'||'(425\.11)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'425\.18\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(425\.18)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'425\.3\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(425\.3)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'425\.4\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(425\.4)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'426\.9\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(426\.9)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'745\.0\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(745\.0)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'745\.1[0129]\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(745\.1[0129])$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'745\.2\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(745\.2)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'745\.3\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(745\.3)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'745\.4\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(745\.4)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'745\.5\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(745\.5)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'745\.6[019]\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(745\.6[019])$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'745\.8\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(745\.8)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'745\.9\\')) or  regexp_like(concept_cd,('(ICD9\:)'||'(745\.9)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'746\.0[0129]\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(746\.0[0129])$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'746\.1\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(746\.1)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'746\.2\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(746\.2)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'746\.3\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(746\.3)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'746\.4\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(746\.4)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'746\.5\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(746\.5)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'746\.6\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(746\.6)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'746\.7\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(746\.7)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'746\.8[12345679]\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(746\.8[12345679])$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'746\.9\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(746\.9)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'747\.0\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(747\.0)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'747\.10\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(747\.10)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'747\.2[0129]\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(747\.2[0129])$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'747\.3[129]\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(747\.3[129])$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'747\.4[0129]\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(747\.4[0129])$'))  
+         )
+and concept_path like '%\i2b2\Diagnoses\ICD9%'
+union all 
+select 'CHD' as Dx_Type
+,concept_cd
+,name_char
+from blueherondata.concept_dimension
+where ( regexp_like(concept_path,('(\\ICD10).*\\'||'I42\.[012489]\\'))  or regexp_like(concept_cd,('(ICD10\:)'||'(I42\.[012489])$'))
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'I45\.9\\'))  or regexp_like(concept_cd,('(ICD10\:)'||'(I45\.9)$'))
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'Q20\.[01234589]\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(Q20\.[01234589])$'))
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'Q21\.[012489]\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(Q21\.[012489])$')) ------
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'Q22\.[012345689]\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(Q22\.[012345689])$'))  ----
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'Q23\.[0123489]\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(Q23\.[0123489])$')) ----
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'Q24\.[012345689]\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(Q24\.[012345689])$')) ----
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'Q25\.[012345689]\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(Q25\.[012345689])$'))  ----
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'Q25\.7[129]\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(Q25\.7[129])$')) ----
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'Q26\.[012348]\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(Q26\.[012348])$'))
+             )
+and concept_path like '%\i2b2\Diagnoses\ICD10%'
+--------------------------------------------------------------------------------------------------------- Sleep Apnea  --------
+union all
+select  'SA' as Dx_Type
+,concept_cd
+,name_char
+from blueherondata.concept_dimension
+where (
+     regexp_like(concept_path,('(\\ICD9).*\\'||'327\.2\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(327\.2)$'))
+     or regexp_like(concept_path,('(\\ICD9).*\\'||'327\.2[012345679]\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(327\.2[012345679])$'))
+     or regexp_like(concept_path,('(\\ICD9).*\\'||'780\.5[137]\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(780\.5[137])$'))
+       )
+and concept_path like '%\i2b2\Diagnoses\ICD9%'
+union all
+select 'SA' as Dx_Type
+,concept_cd
+,name_char
+from blueherondata.concept_dimension
+where (
+         regexp_like(concept_path,('(\\ICD10).*\\'||'G47\.3\\'))   or regexp_like(concept_cd,('(ICD10\:)'||'(G47\.3)$'))
+         or regexp_like(concept_path,('(\\ICD10).*\\'||'G47\.3[01345679]\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(G47\.3[01345679])$'))   
+       )
+and concept_path like '%\i2b2\Diagnoses\ICD10%'
+---------------------------------------------------------------------------------------------- Pulmonary Hypertension ---------
+union all
+select  'PH' as Dx_Type
+,concept_cd
+,name_char
+from blueherondata.concept_dimension
+where (
+        regexp_like(concept_path,('(\\ICD9).*\\'||'416\.0\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(416\.0)$'))
+      )
+and concept_path like '%\i2b2\Diagnoses\ICD9%'
+union all
+select 'PH' as Dx_Type
+,concept_cd
+,name_char
+from blueherondata.concept_dimension
+where (
+    regexp_like(concept_path,('(\\ICD10).*\\'||'I27\.0\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(I27\.0)$'))
+    or regexp_like(concept_path,('(\\ICD10).*\\'||'I27\.2\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(I27\.2)$'))
+      )
+and concept_path like '%\i2b2\Diagnoses\ICD10%'
+----------------------------------------------------------------------------------------- Diabetes II -------------------------
+union all
+select 'T2D' as Dx_Type
+,concept_cd
+,name_char
+from blueherondata.concept_dimension
+where (
+      regexp_like(concept_path,('(\\ICD9).*\\'||'250\.00\\'))  or regexp_like(concept_cd,('(ICD9\:)'||'(250\.00)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'250\.02\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(250\.02)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'250\.10\\'))  or regexp_like(concept_cd,('(ICD9\:)'||'(250\.10)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'250\.12\\'))  or regexp_like(concept_cd,('(ICD9\:)'||'(250\.12)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'250\.2\\'))  or regexp_like(concept_cd,('(ICD9\:)'||'(250\.2)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'250\.20\\'))  or regexp_like(concept_cd,('(ICD9\:)'||'(250\.20)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'250\.22\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(250\.22)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'250\.3\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(250\.3)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'250\.30\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(250\.30)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'250\.32\\'))  or regexp_like(concept_cd,('(ICD9\:)'||'(250\.32)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'250\.4\\'))  or regexp_like(concept_cd,('(ICD9\:)'||'(250\.4)$'))
+      or  regexp_like(concept_path,('(\\ICD9).*\\'||'250\.40\\'))  or regexp_like(concept_cd,('(ICD9\:)'||'(250\.40)$'))
+      or  regexp_like(concept_path,('(\\ICD9).*\\'||'250\.42\\'))  or regexp_like(concept_cd,('(ICD9\:)'||'(250\.42)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'250\.5\\'))  or regexp_like(concept_cd,('(ICD9\:)'||'(250\.5)$'))
+      or  regexp_like(concept_path,('(\\ICD9).*\\'||'250\.50\\'))  or regexp_like(concept_cd,('(ICD9\:)'||'(250\.50)$'))
+      or  regexp_like(concept_path,('(\\ICD9).*\\'||'250\.52\\'))  or regexp_like(concept_cd,('(ICD9\:)'||'(250\.52)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'250\.6\\'))  or regexp_like(concept_cd,('(ICD9\:)'||'(250\.6)$'))
+      or  regexp_like(concept_path,('(\\ICD9).*\\'||'250\.60\\'))  or regexp_like(concept_cd,('(ICD9\:)'||'(250\.60)$'))
+      or  regexp_like(concept_path,('(\\ICD9).*\\'||'250\.62\\'))  or regexp_like(concept_cd,('(ICD9\:)'||'(250\.62)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'250\.7\\'))  or regexp_like(concept_cd,('(ICD9\:)'||'(250\.7)$'))
+      or  regexp_like(concept_path,('(\\ICD9).*\\'||'250\.70\\'))  or regexp_like(concept_cd,('(ICD9\:)'||'(250\.70)$'))
+      or  regexp_like(concept_path,('(\\ICD9).*\\'||'250\.72\\'))  or regexp_like(concept_cd,('(ICD9\:)'||'(250\.72)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'250\.8\\'))  or regexp_like(concept_cd,('(ICD9\:)'||'(250\.8)$'))
+      or  regexp_like(concept_path,('(\\ICD9).*\\'||'250\.80\\'))  or regexp_like(concept_cd,('(ICD9\:)'||'(250\.80)$'))
+      or  regexp_like(concept_path,('(\\ICD9).*\\'||'250\.82\\'))  or regexp_like(concept_cd,('(ICD9\:)'||'(250\.82)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'250\.9\\'))  or regexp_like(concept_cd,('(ICD9\:)'||'(250\.9)$'))
+      or  regexp_like(concept_path,('(\\ICD9).*\\'||'250\.90\\'))  or regexp_like(concept_cd,('(ICD9\:)'||'(250\.90)$'))
+      or  regexp_like(concept_path,('(\\ICD9).*\\'||'250\.92\\'))  or regexp_like(concept_cd,('(ICD9\:)'||'(250\.92)$'))
+      )
+and concept_path like '%\i2b2\Diagnoses\ICD9%'
+union all
+select 'T2D' as Dx_Type
+,concept_cd
+,name_char
+from blueherondata.concept_dimension
+where (
+        regexp_like(concept_path,('(\\ICD10).*\\'||'E11\..*')) or regexp_like(concept_cd,('(ICD10\:)'||'(E11\..*)$'))
+      )
+and concept_path like '%\i2b2\Diagnoses\ICD10%'
+-----------------------------------------------------------------------------------------------------------  Dementia  ---------
+union all
+select  'DEM' as Dx_Type
+,concept_cd
+,name_char
+from blueherondata.concept_dimension
+where (
+      regexp_like(concept_path,('(\\ICD9).*\\'||'290\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(290)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'290\.0\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(290\.0)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'290\.1[0123]\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(290\.1[0123])$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'290\.2\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(290\.2)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'290\.2[01]\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(290\.2[01])$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'290\.3\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(290\.3)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'290\.4\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(290\.4)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'290\.4[0123]\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(290\.4[0123])$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'290\.8\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(290\.8)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'290\.9\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(290\.9)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'292\.82\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(292\.82)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'294\.1\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(294\.1)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'294\.11\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(294\.11)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'294\.2\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(294\.2)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'294\.2[01]\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(294\.2[01])$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'331\.1\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(331\.1)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'331\.1[19]\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(331\.1[19])$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'331\.2\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(331\.2)$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'331\.8[29]\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(331\.8[29])$'))
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'331\.9\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(331\.9)$'))
+      or regexp_like(concept_cd,('(ICD9\:)'||'(332)$'))    -- If no decimals other concepst may be included
+      or regexp_like(concept_path,('(\\ICD9).*\\'||'332\.1\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(332\.1)$'))
+      or regexp_like(concept_cd,('(ICD9\:)'||'(333)$'))
+      or regexp_like(concept_cd,('(ICD9\:)'||'(333\.0)$')) or regexp_like(concept_cd,('(ICD9\:)'||'(333\.0)$'))
+     )
+and concept_path like '%\i2b2\Diagnoses\ICD9%'
+union all 
+select 'DEM' as Dx_Type
+,concept_cd
+,name_char
+from blueherondata.concept_dimension
+where (
+       regexp_like(concept_path,('(\\ICD10).*\\'||'F01\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(F01)$'))
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'F01\.5\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(F01\.5)$'))
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'F01\.5[01]\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(F01\.5[01])$'))
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'F02\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(F02)$'))
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'F02\.8\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(F02\.8)$'))
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'F02\.8[01]\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(F02\.8[01])$'))
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'F03\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(F03)$'))
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'F03\.9\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(F03\.9)$'))
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'F03\.9[01]\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(F03\.9[01])$'))     
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'G31\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(G31)$'))   
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'G31\.0[19]\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(G31\.0[19])$'))   
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'G31\.1\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(G31\.1)$'))   
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'G31\.8\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(G31\.8)$'))  
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'G31\.8[1235]\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(G31\.8[1235])$'))   
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'G31\.9\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(G31\.9)$'))  
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'G32\.8\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(G32\.8)$'))  
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'G31\.8[19]\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(G31\.8[19])$'))  
+      )
+and concept_path like '%\i2b2\Diagnoses\ICD10%'
+----------------------------------------------------------------------------------------------------Hyperthyroidism ------------
+union all
+select  'HYT' as Dx_Type
+,concept_cd
+,name_char
+from blueherondata.concept_dimension
+where (
+      regexp_like(concept_cd,('(ICD9\:)'||'(243)$'))    -- If no decimals other concepst may be included
+      or regexp_like(concept_cd,('(ICD9\:)'||'(244)$')) 
+      or  regexp_like(concept_path,('(\\ICD9).*\\'||'244\.9\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(244\.9)$'))
+      )
+and concept_path like '%\i2b2\Diagnoses\ICD9%'
+union all 
+select 'HYT' as Dx_Type
+,concept_cd
+,name_char
+from blueherondata.concept_dimension
+where (
+       regexp_like(concept_path,('(\\ICD10).*\\'||'E03\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(E03)$'))
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'E03\.[0123489]\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(E03\.[0123489])$'))
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'E04\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(E04)$'))
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'E04\.[01289]\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(E04\.[01289])$'))
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'E07\.81\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(E07\.81)$'))
+       
+      )
+and concept_path like '%\i2b2\Diagnoses\ICD10%'
+---------------------------------------------------------------------------------------------------- Systolic Hypertension -----
+union all
+select  'SYH' as Dx_Type
+,concept_cd
+,name_char
+from blueherondata.concept_dimension
+where (
+        regexp_like(concept_path,('(\\ICD9).*\\'||'796\.2\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(796\.2)$'))
+        or regexp_like(concept_path,('(\\ICD9).*\\'||'997\.91\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(997\.91)$'))
+        or regexp_like(concept_path,('(\\ICD9).*\\'||'V81\.1\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(V81\.1)$'))
+        or regexp_like(concept_cd,('(ICD9\:)'||'(401)$'))
+        or regexp_like(concept_path,('(\\ICD9).*\\'||'401\.[019]\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(401\.[019])$'))
+        or regexp_like(concept_cd,('(ICD9\:)'||'(405)$'))
+        or regexp_like(concept_path,('(\\ICD9).*\\'||'405\.0\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(405\.0)$'))
+        or regexp_like(concept_path,('(\\ICD9).*\\'||'405\.0[19]\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(405\.0[19])$'))
+        or regexp_like(concept_path,('(\\ICD9).*\\'||'405\.1\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(405\.1)$'))
+        or regexp_like(concept_path,('(\\ICD9).*\\'||'405\.1[19]\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(405\.1[19])$'))
+        or regexp_like(concept_path,('(\\ICD9).*\\'||'405\.9\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(405\.9)$'))
+        or regexp_like(concept_path,('(\\ICD9).*\\'||'405\.9[19]\\'))   or regexp_like(concept_cd,('(ICD9\:)'||'(405\.9[19])$'))
+     )
+and concept_path like '%\i2b2\Diagnoses\ICD9%'
+union all 
+select  'SYH' as Dx_Type
+,concept_cd
+,name_char
+from blueherondata.concept_dimension
+where (
+       regexp_like(concept_path,('(\\ICD10).*\\'||'I15\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(I15)$'))
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'I15\.[01289]\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(I15\.[01289])$'))
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'R03\.0\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(R03\.0)$'))
+       )
+and concept_path like '%\i2b2\Diagnoses\ICD10%'
+;
+
+---- View 
+select * from other_comobid;
+
+--------------------------------------------------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------------------------------
+
+----- Now we will create table with all the patients in this study
+           ---- This has all DS, ASD and IDD patients.
+           
+drop table dsstudy_cohort purge;
+
+create table dsstudy_cohort as
+select patient_num
+,encounter_num
+,encounter_dt
+,'DS' as type
+from ds_bmi 
+union all
+select patient_num
+,encounter_num
+,encounter_dt
+,'ASD' as type
+from autnods_bmi 
+union all
+select patient_num
+,encounter_num
+,encounter_dt
+,'IDD' as type
+from iddnoadsaut_bmi 
+;
+
+select  * from dsstudy_cohort;
+
+select count (*), count(distinct patient_num), count(distinct encounter_num)
+from dsstudy_cohort     ---- 14278
+;
+
+
+------------- Extracting the data in a differnt  way;
+
+ drop table comb_tbl_new  purge; 
+ 
+ create table comb_tbl_new as 
+ with tab_com as (
+ select cht.patient_num
+,obs.concept_cd
+,obs.start_date
+ from  dsstudy_cohort cht
+ join blueherondata.observation_fact obs
+      on cht.patient_num=obs.patient_num
+      where obs.concept_cd in (select distinct concept_cd 
+                               from other_comobid)
+)
+select tbc.* 
+,tcm.Dx_type
+from tab_com tbc
+join other_comobid tcm
+     on tbc.concept_cd=tcm.concept_cd
+;     
+ 
+---- View
+select * from comb_tbl_new;
+ 
+
+/* Create table with first comorbidity date  */
+
+drop table comb_tbl_newdt  purge; 
+ 
+ create table comb_tbl_newdt as 
+ select distinct
+ --cht.*
+ cht.patient_num
+ ,cmt.chdDx_dt
+ ,sat.saDx_dt
+ ,pht.phDx_dt
+ ,t2t.t2dDx_dt
+ ,det.deDx_dt
+ ,hyt.hytDx_dt
+ ,syt.syhDx_dt
+ from dsstudy_cohort cht
+ left join ( select patient_num
+              ,min(start_date) as chdDx_dt
+              from comb_tbl_new 
+              where Dx_type='CHD'
+             group by patient_num
+             ) cmt
+  on cht.patient_num=cmt.patient_num
+ left join ( select patient_num
+              ,min(start_date) as saDx_dt
+              from comb_tbl_new 
+              where Dx_type='SA'
+              group by patient_num
+             ) sat
+  on cht.patient_num=sat.patient_num            
+ left join ( select patient_num
+              ,min(start_date) as phDx_dt
+              from comb_tbl_new 
+              where Dx_type='PH'
+              group by patient_num
+             ) pht
+    on cht.patient_num=pht.patient_num
+  left join ( select patient_num
+              ,min(start_date) as t2dDx_dt
+              from comb_tbl_new 
+              where Dx_type='T2D'
+              group by patient_num
+             ) t2t
+     on cht.patient_num=t2t.patient_num
+  left join ( select patient_num
+              ,min(start_date) as deDx_dt 
+              from comb_tbl_new 
+              where Dx_type='DEM'
+              group by patient_num
+             ) det
+   on cht.patient_num=det.patient_num
+  left join ( select patient_num
+              ,min(start_date) as hytDx_dt
+              from comb_tbl_new 
+              where Dx_type='HYT'
+              group by patient_num
+             ) hyt
+   on cht.patient_num=hyt.patient_num
+ left join ( select patient_num
+              ,min(start_date) as syhDx_dt
+              from comb_tbl_new 
+              where Dx_type='SYH'
+              group by patient_num
+             ) syt   
+    on cht.patient_num=syt.patient_num
+                
+;   
+select * from comb_tbl_newdt;
+
+
+----- Craeting final table for comorbidity anlaysis
+
+drop table ds_bmicomobid purge;
+
+create table ds_bmicomobid as
+ with tab_bmi as (
+ select  tdm.patient_num
+  ,tdm.Dx_date
+  ,tbm.encounter_num
+  ,tbm.encounter_dt
+  ,tdm.birth_date
+  ,round((tbm.encounter_dt-tdm.birth_date)/365.25,2) as age_visit_yr
+  ,round((tbm.encounter_dt-tdm.birth_date)/30.44,2) as age_visit_mo 
+ -- ,case when tdm.death_date is null then null-----sysdate
+     ---       else tdm.death_date end as death_date
+  ,tdm.sex
+  ,tdm.race
+  ---,tdm.pregnant
+  ,tbm.weight_dt
+  ,tbm.weight
+  ,tbm.height_dt
+  ,tbm.height
+  ,tbm.bmiper_dt
+  ,tbm.bmiper
+  ,tbm.bmi_dt
+  ,tbm.bmi
+from ds_bmi tbm
+--join ds_demo tdm
+    --- on tbm.patient_num=tdm.patient_num
+join (select distinct patient_num,dx_date,birth_date
+       ,sex, race from ds_bmidemo) tdm                ---- This is added to get the number consistnat with main table
+     on tbm.patient_num=tdm.patient_num
+where tbm. encounter_num in (select encounter_num
+                              from ds_bmidemo)
+)
+select tab1.*
+  ,cmt.chdDx_dt
+  ,cmt.saDx_dt
+  ,cmt.phDx_dt
+  ,cmt.t2dDx_dt
+  ,cmt.deDx_dt
+  ,cmt.hytDx_dt
+  ,cmt.syhDx_dt
+ --- ,round(months_between(cmt.chdDx_dt, tab1.birth_date),2) as age_chd_mo   
+     ,round((cmt.chdDx_dt-tab1.birth_date)/30.44,2) as age_chd_mo 
+---  ,round(months_between(cmt.saDx_dt, tab1.birth_date),2) as age_sa_mo
+     ,round((cmt.saDx_dt-tab1.birth_date)/30.44,2) as age_sa_mo 
+ --- ,round(months_between(cmt.phDx_dt, tab1.birth_date),2) as age_ph_mo
+     ,round((cmt.phDx_dt-tab1.birth_date)/30.44,2) as age_ph_mo 
+ --- ,round(months_between(cmt.t2dDx_dt, tab1.birth_date),2) as age_t2d_mo
+     ,round((cmt.t2dDx_dt-tab1.birth_date)/30.44,2) as age_t2d_mo 
+---  ,round(months_between(cmt.deDx_dt, tab1.birth_date),2) as age_de_mo
+     ,round((cmt.deDx_dt-tab1.birth_date)/30.44,2) as age_de_mo 
+ --- ,round(months_between(cmt.hytDx_dt, tab1.birth_date),2) as age_hyt_mo
+     ,round((cmt.hytDx_dt-tab1.birth_date)/30.44,2) as age_hyt_mo 
+ --- ,round(months_between(cmt.syhDx_dt, tab1.birth_date),2) as age_syh_mo
+     ,round((cmt.syhDx_dt-tab1.birth_date)/30.44,2) as age_syh_mo 
+from tab_bmi tab1
+left join comb_tbl_newdt cmt
+    on tab1.patient_num=cmt.patient_num 
+         ------and tab1.encounter_num=cmt.encounter_num
+;
+
+---- View
+select * from ds_bmicomobid;
+
+select count(*),count(distinct patient_num)
+from ds_bmicomobid;
+------ 1148
+

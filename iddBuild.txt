@@ -1,0 +1,351 @@
+   
+
+/***** Build IDD but not DS or ASD daignosis given   ****/
+
+
+drop table idd_comobid purge;
+
+create table idd_comobid as
+select  'Intelectual Dissability' as Dx_Type
+,concept_cd
+,name_char
+from blueherondata.concept_dimension
+where (
+      regexp_like(concept_path,('(\\ICD9).*\\'||'317\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(317\\)$'))
+       or 
+       regexp_like(concept_path,('(\\ICD9).*\\'||'318\.0\')) or regexp_like(concept_cd,('(ICD9\:)'||'(318\.0)$'))
+      or
+      regexp_like(concept_path,('(\\ICD9).*\\'||'318\.1\')) or regexp_like(concept_cd,('(ICD9\:)'||'(318\.2)$'))
+      or
+      regexp_like(concept_path,('(\\ICD9).*\\'||'318\.2\')) or regexp_like(concept_cd,('(ICD9\:)'||'(318\.2)$'))
+       or
+      regexp_like(concept_path,('(\\ICD9).*\\'||'319\\')) or regexp_like(concept_cd,('(ICD9\:)'||'(319\\)$'))
+       )
+and concept_path like '%\i2b2\Diagnoses\ICD9%'
+union all
+select 'Intelectual Dissability' as Dx_Type
+,concept_cd
+,name_char
+from blueherondata.concept_dimension
+where ( 
+        regexp_like(concept_path,('(\\ICD10).*\\'||'F70\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(F70\\)$'))
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'F71\')) or regexp_like(concept_cd,('(ICD10\:)'||'(F71\\)$'))
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'F72\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(F72\\)$'))
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'F73\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(F73\\)$'))
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'F78\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(F78\\)$'))
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'F79\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(F79\\)$'))
+       or regexp_like(concept_path,('(\\ICD10).*\\'||'F88\\')) or regexp_like(concept_cd,('(ICD10\:)'||'(F88\\)$'))  
+       )
+and concept_path like '%\i2b2\Diagnoses\ICD10%'
+;
+
+----- View
+select * from idd_comobid;
+
+drop table idd_cohort purge;
+
+create table idd_cohort as
+select patient_num
+,min(start_date) as Dx_date
+from blueherondata.observation_fact
+   where concept_cd in ( select concept_cd
+                           from idd_comobid
+                           where Dx_Type='Intelectual Dissability'                           
+                        )
+group by patient_num
+;
+
+----View count
+select count(distinct patient_num)
+from idd_cohort;    ---- 5812
+
+
+/**** IDD but no DS nor ASD ******/
+
+drop table iddnodsaut_cohort purge;
+
+create table iddnodsaut_cohort as 
+select patient_num
+,Dx_date
+from idd_cohort
+where patient_num not in ( select patient_num
+                           from ds_cohort
+                           union all
+                           select patient_num
+                           from aut_cohort
+                           )
+;
+
+select count(distinct patient_num)
+from iddnodsaut_cohort;   ---- 3548
+
+--- We have 5842-3548 = 2394 idd patients with DS or Austism
+
+drop table iddnodsaut_demo  purge;
+ 
+ create table iddnodsaut_demo as 
+ select dsc.patient_num
+ ,dsc.Dx_date
+,pat.birth_date
+,pat.death_date
+,pat.sex_cd sex
+,pat.race_cd race
+,case when prg.start_date is not null then 'y'
+             else null end as pregnant
+from iddnodsaut_cohort dsc
+left join blueherondata.patient_dimension pat
+      on dsc.patient_num=pat.patient_num
+left join (select patient_num
+                   ,min(start_date) as start_date
+                   from blueherondata.observation_fact
+                   where concept_cd in (select concept_cd from preg_comobid) 
+                   group by patient_num) prg
+      on dsc.patient_num=prg.patient_num
+;
+
+----- View
+select * from iddnodsaut_demo;
+
+select count (distinct patient_num)
+from iddnodsaut_demo;    -----3548
+
+select count(distinct patient_num) from iddnodsaut_demo
+where pregnant is not null;     ----- 72
+
+select count(distinct patient_num) from iddnodsaut_demo
+where death_date is not null;    ----- 325
+
+
+/***** Extracting Weight, Height, and BMI data ****/
+
+
+ drop table iddnodsaut_bmi  purge; 
+ 
+ create table iddnoadsaut_bmi as 
+ with tab_enc as (
+ select dsc.patient_num
+ ,obs.encounter_num
+ ,min(obs.start_date) as encounter_dt
+ from iddnodsaut_cohort dsc
+ left join blueherondata.observation_fact obs
+      on dsc.patient_num=obs.patient_num
+ group by dsc.patient_num,obs.encounter_num 
+ )
+  ,tab_weight as (
+ select dsc.patient_num
+ ,obs.encounter_num
+ ,min(obs.start_date) as weight_dt
+ ,round(avg(obs.nval_num),2) as weight
+ from iddnodsaut_cohort dsc
+ left join blueherondata.observation_fact obs
+      on dsc.patient_num=obs.patient_num
+ where obs.concept_cd='KUH|PAT_ENC:WEIGHT'
+ group by dsc.patient_num,obs.encounter_num 
+ )
+ ,tab_height as (
+ select dsc.patient_num
+ ,obs.encounter_num
+ ,min(obs.start_date) as height_dt
+ ,round(avg(obs.nval_num),2) as height
+ from iddnodsaut_cohort dsc
+ left join blueherondata.observation_fact obs
+      on dsc.patient_num=obs.patient_num
+ where obs.concept_cd='KUH|PAT_ENC:HEIGHT'
+ group by dsc.patient_num,obs.encounter_num 
+ )
+ ,tab_bmiper as (
+ select dsc.patient_num
+ ,obs.encounter_num
+ ,min(obs.start_date) as bmiper_dt
+ ,round(avg(obs.nval_num),2) as bmiper
+ from iddnodsaut_cohort dsc
+ left join blueherondata.observation_fact obs
+      on dsc.patient_num=obs.patient_num
+ where obs.concept_cd='KUH|PAT_ENC:BMI_PERCENTILE'
+ group by dsc.patient_num,obs.encounter_num 
+ )
+ ,tab_bmi as (
+ select dsc.patient_num
+ ,obs.encounter_num
+ ,min(obs.start_date) as bmi_dt
+ ,round(avg(obs.nval_num),2) as bmi
+ from iddnodsaut_cohort dsc
+ left join blueherondata.observation_fact obs
+      on dsc.patient_num=obs.patient_num
+ where obs.concept_cd='KUH|PAT_ENC:BMI'
+ group by dsc.patient_num,obs.encounter_num 
+ )
+  select enc.patient_num
+  ,enc.encounter_num
+  ,encounter_dt
+  ,tbw.weight_dt
+  ,tbw.weight
+  ,tbh.height_dt
+  ,tbh.height
+  ,tbp.bmiper_dt
+  ,tbp.bmiper
+  ,tbb.bmi_dt
+  ,tbb.bmi
+from tab_enc enc
+left join tab_weight tbw
+     on enc.patient_num=tbw.patient_num and enc.encounter_num=tbw.encounter_num
+left join tab_height tbh
+     on enc.patient_num=tbh.patient_num and enc.encounter_num=tbh.encounter_num
+left join tab_bmiper tbp
+     on enc.patient_num=tbp.patient_num and enc.encounter_num=tbp.encounter_num
+left join tab_bmi tbb
+     on enc.patient_num=tbb.patient_num and enc.encounter_num=tbb.encounter_num
+ ;
+
+
+select * from iddnoadsaut_bmi;
+
+select count(distinct patient_num) from iddnodsaut_bmi;  ----- 3548
+
+ 
+drop table iddnodsaut_bmidemo  purge; 
+ 
+create table iddnodsaut_bmidemo as 
+with tab_bmi as (
+ select tdm.patient_num
+  ,tdm.birth_date
+  ,tdm.Dx_date
+  ,tbm.encounter_num
+  ,tbm.encounter_dt
+  ,round((tbm.encounter_dt-tdm.birth_date)/365.25,2) as age_visit_yr
+  ,round((tbm.encounter_dt-tdm.birth_date)/30.44,2) as age_visit_mo
+  ,case when tdm.death_date is null then null ------sysdate
+            else tdm.death_date end as death_date
+  ,tdm.sex
+  ,tdm.race
+from iddnoadsaut_bmi tbm
+join iddnodsaut_demo tdm
+     on tbm.patient_num=tdm.patient_num   
+)
+select tbl.*
+from tab_bmi tbl
+ where 
+   tbl.encounter_dt>=tbl.Dx_date     ----  3471
+
+      and 
+     tbl.age_visit_mo>=24         ----    3483
+    
+   and  tbl.patient_num not in ( select patient_num from iddnodsaut_demo
+                             where pregnant is not null)
+    and  
+        tbl.patient_num not in ( select patient_num from iddnodsaut_demo
+                              where death_date is not null)
+       
+;  
+
+select count(distinct patient_num)
+from iddnodsaut_bmidemo;     ---- 3018
+
+
+---#############################################################################################################################################------
+
+
+drop table iddnodsaut_bmicomobid purge;
+
+create table iddnodsaut_bmicomobid as
+ with tab_bmi as (
+ select  tdm.patient_num
+  ,tdm.Dx_date
+  ,tbm.encounter_num
+  ,tbm.encounter_dt
+  ,tdm.birth_date
+  ,round((tbm.encounter_dt-tdm.birth_date)/365.25,2) as age_visit_yr
+  ,round(months_between(tbm.encounter_dt, tdm.birth_date),2) as age_visit_mo
+---  ,case when tdm.death_date is null then sysdate
+        ---    else tdm.death_date end as death_date
+  ,tdm.sex
+  ,tdm.race
+ --- ,tdm.pregnant
+  ,tbm.weight_dt
+  ,tbm.weight
+  ,tbm.height_dt
+  ,tbm.height
+  ,tbm.bmiper_dt
+  ,tbm.bmiper
+  ,tbm.bmi_dt
+  ,tbm.bmi
+from iddnodsaut_bmi tbm
+--join ds_demo tdm
+    --- on tbm.patient_num=tdm.patient_num
+join (select distinct patient_num,dx_date,birth_date
+       ,sex, race from iddnodsaut_bmidemo) tdm                ---- This is added to get the number consistnat with main table
+     on tbm.patient_num=tdm.patient_num
+where tbm. encounter_num in (select encounter_num
+                              from iddnodsaut_bmidemo)
+)
+select tab1.*
+  ,cmt.chdDx_dt
+  ,cmt.saDx_dt
+  ,cmt.phDx_dt
+  ,cmt.t2dDx_dt
+  ,cmt.deDx_dt
+  ,cmt.hytDx_dt
+  ,cmt.syhDx_dt
+ --- ,round(months_between(cmt.chdDx_dt, tab1.birth_date),2) as age_chd_mo   
+     ,round((cmt.chdDx_dt-tab1.birth_date)/30.44,2) as age_chd_mo
+     ,round((cmt.chdDx_dt-tab1.dx_date),2) as dxto_chd_dt
+     ,case
+         when round((cmt.chdDx_dt-tab1.birth_date)/30.44,2)< 240 then 'Kid'
+         when round((cmt.chdDx_dt-tab1.birth_date)/30.44,2)>= 240 then 'Adult'
+                                    else null end as chdDx_Age_cat
+---  ,round(months_between(cmt.saDx_dt, tab1.birth_date),2) as age_sa_mo
+     ,round((cmt.saDx_dt-tab1.birth_date)/30.44,2) as age_sa_mo 
+     ,round((cmt.saDx_dt-tab1.dx_date),2) as dxto_sa_dt
+     ,case
+         when round((cmt.saDx_dt-tab1.birth_date)/30.44,2)< 240 then 'Kid'
+         when round((cmt.saDx_dt-tab1.birth_date)/30.44,2)>= 240 then 'Adult'
+                                    else null end as saDx_Age_cat
+ --- ,round(months_between(cmt.phDx_dt, tab1.birth_date),2) as age_ph_mo
+     ,round((cmt.phDx_dt-tab1.birth_date)/30.44,2) as age_ph_mo 
+     ,round((cmt.phDx_dt-tab1.dx_date),2) as dxto_ph_dt
+     ,case
+         when round((cmt.phDx_dt-tab1.birth_date)/30.44,2)< 240 then 'Kid'
+         when round((cmt.phDx_dt-tab1.birth_date)/30.44,2)>= 240 then 'Adult'
+                                    else null end as phDx_Age_cat
+ --- ,round(months_between(cmt.t2dDx_dt, tab1.birth_date),2) as age_t2d_mo
+     ,round((cmt.t2dDx_dt-tab1.birth_date)/30.44,2) as age_t2d_mo 
+     ,round((cmt.t2dDx_dt-tab1.dx_date),2) as dxto_t2d_dt
+     ,case
+         when round((cmt.t2dDx_dt-tab1.birth_date)/30.44,2)< 240 then 'Kid'
+         when round((cmt.t2dDx_dt-tab1.birth_date)/30.44,2)>= 240 then 'Adult'
+                                    else null end as t2dDx_Age_cat
+---  ,round(months_between(cmt.deDx_dt, tab1.birth_date),2) as age_de_mo
+     ,round((cmt.deDx_dt-tab1.birth_date)/30.44,2) as age_de_mo 
+     ,round((cmt.deDx_dt-tab1.dx_date),2) as dxto_de_dt
+      ,case
+         when round((cmt.deDx_dt-tab1.birth_date)/30.44,2)< 240 then 'Kid'
+         when round((cmt.deDx_dt-tab1.birth_date)/30.44,2)>= 240 then 'Adult'
+                                    else null end as deDx_Age_cat
+ --- ,round(months_between(cmt.hytDx_dt, tab1.birth_date),2) as age_hyt_mo
+     ,round((cmt.hytDx_dt-tab1.birth_date)/30.44,2) as age_hyt_mo 
+     ,round((cmt.hytDx_dt-tab1.dx_date),2) as dxto_hyt_dt
+      ,case
+         when round((cmt.hytDx_dt-tab1.birth_date)/30.44,2)< 240 then 'Kid'
+         when round((cmt.hytDx_dt-tab1.birth_date)/30.44,2)>= 240 then 'Adult'
+                                    else null end as hytDx_Age_cat
+ --- ,round(months_between(cmt.syhDx_dt, tab1.birth_date),2) as age_syh_mo
+     ,round((cmt.syhDx_dt-tab1.birth_date)/30.44,2) as age_syh_mo 
+     ,round((cmt.syhDx_dt-tab1.dx_date),2) as dxto_syh_dt
+      ,case
+         when round((cmt.syhDx_dt-tab1.birth_date)/30.44,2)< 240 then 'Kid'
+         when round((cmt.syhDx_dt-tab1.birth_date)/30.44,2)>= 240 then 'Adult'
+                                    else null end as syhDx_Age_cat
+from tab_bmi tab1
+left join comb_tbl_newdt cmt
+    on tab1.patient_num=cmt.patient_num 
+;
+
+------ View
+select * from iddnodsaut_bmicomobid;
+
+select count (distinct patient_num)
+from iddnodsaut_bmicomobid;   --- 3018
+
+select count (distinct  patient_num)
+from iddnodsaut_bmicomobid
+where age_chd_mo is not null;
