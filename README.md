@@ -32,7 +32,7 @@ Comorbidities
 - HYT – Hyperthyroidism
 - SYH – Systolic Hypertension
 
-*All ICD 9 and ICD 10 code used for this study is given in the supplementary material section of the working paper*
+*All ICD 9 and ICD 10 codes used for this study is given in the supplementary material section of the working paper*
 
 ### Contents
 - `dsBuild.sql` – This SQL syntax file is used to create the 4 tables schema); DS_COHORT, DS_BMI, DS_BMIDEMO, DS_BMICOMOBID, which were later accessed by the R scripts to do the analysis for DS sub-cohort. These tables comprised of BMI data, Comorbidities, and Demographics needed for the analysis
