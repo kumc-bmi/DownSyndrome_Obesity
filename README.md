@@ -19,18 +19,18 @@ To further advance our understanding of obesity prevalence in children and adult
 Patient sub-group and comorbidity Definitions:
 
 Sub-groups
--DS – Patients with Downs Syndrome 
--ASD – Patients with ASD but not with DS
--Other IDD – Patients with IDD but without DS or ASD
+- DS – Patients with Downs Syndrome 
+- ASD – Patients with ASD but not with DS
+- Other IDD – Patients with IDD but without DS or ASD
 
 Comorbidities
--CHD – Congenital Heart Defect
--OSA (or SA) – Obstructive Sleep apnea
--PLH (or PH) – Pulmonary Hyper tension
--T2D – Type II Diabetes
--DEM (or DE) – Demetria
--HYT – Hyperthyroidism
--SYH – Systolic Hypertension
+- CHD – Congenital Heart Defect
+- OSA (or SA) – Obstructive Sleep apnea
+- PLH (or PH) – Pulmonary Hyper tension
+- T2D – Type II Diabetes
+- DEM (or DE) – Demetria
+- HYT – Hyperthyroidism
+- SYH – Systolic Hypertension
 *All ICD 9 and ICD 10 code used for this study is given in the supplementary material section of the working paper*
 
 ### Contents
