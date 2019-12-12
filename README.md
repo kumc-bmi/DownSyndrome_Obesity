@@ -8,7 +8,7 @@ Research Team: Lakmal Walpitage (Analyst/Programmer), Russ Waitman, Mina Mosheni
                 
 ### Introduction
 
-In people with intellectual and developmental disabilities (IDD), the rates of obesity are even higher.  Several studies have reported that the prevalence of obesity among adults with IDD ranges from 26.5% to 58.5% in the United States (6-8). The prevalence of overweight and obesity (BMI ≥ the 85th%ile) in adolescents with IDD ranges from 19% to 60.5%(9-11), with the prevalence in children ranging from 10-45%(12). Compared with the general population (13),obesity is a significantly greater problem in individuals with IDD
+In people with intellectual and developmental disabilities (IDD), the rates of obesity are even higher.  Several studies have reported that the prevalence of obesity among adults with IDD ranges from 26.5% to 58.5% in the United States. The prevalence of overweight and obesity (BMI ≥ the 85th%ile) in adolescents with IDD ranges from 19% to 60.5%, with the prevalence in children ranging from 10-45%. Compared with the general population,obesity is a significantly greater problem in individuals with IDD.
 
 ### Goals/Objectives 
 To further advance our understanding of obesity prevalence in children and adults with Intellectual and Development Disabilities (IDD) this study utilized electronic medical records from individuals with IDD being treated at The University of Kansas Health Systems to answer the following questions: 
