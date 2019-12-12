@@ -6,9 +6,8 @@
    Database Conection Date: 08/19/2019
  
  In this project I am working with Down Syndrome Patients and their Obesity Trends and Comorbidities.
- Later i will add more....ASD and IDD
-  
-*/
+ Later I will add more....ASD and IDD
+ */
 
 alter session set NLS_TIMESTAMP_FORMAT = 'DD-MM-YYYY'; 
 alter session set NLS_DATE_FORMAT = 'DD-MM-YYYY';
