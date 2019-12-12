@@ -31,6 +31,7 @@ Comorbidities
 - DEM (or DE) – Demetria
 - HYT – Hyperthyroidism
 - SYH – Systolic Hypertension
+
 *All ICD 9 and ICD 10 code used for this study is given in the supplementary material section of the working paper*
 
 ### Contents
